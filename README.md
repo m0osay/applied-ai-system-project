@@ -143,19 +143,37 @@ The scheduler allocates tasks in sorted order and skips any that don't fit. A pr
 
 ## Testing Summary
 
+**Results: 8 out of 8 tests passed** (0.86s, no network required).
+
+| # | Test | Type | Result |
+|---|---|---|---|
+| 1 | `test_mark_complete_changes_task_status` | Scheduler unit | PASSED |
+| 2 | `test_add_task_increases_pet_task_count` | Scheduler unit | PASSED |
+| 3 | `test_mark_task_complete_creates_next_daily_occurrence` | Scheduler unit | PASSED |
+| 4 | `test_mark_task_complete_creates_next_weekly_occurrence` | Scheduler unit | PASSED |
+| 5 | `test_sort_by_time_returns_tasks_in_chronological_order` | Scheduler unit | PASSED |
+| 6 | `test_detect_conflicts_flags_duplicate_task_times` | Scheduler unit | PASSED |
+| 7 | `test_agent_returns_fallback_when_api_key_missing` | AI reliability | PASSED |
+| 8 | `test_agent_degrades_gracefully_on_api_error` | AI reliability | PASSED |
+
+**Reliability signals used:**
+- **Automated tests** — 8 unit tests covering scheduler logic and AI fallback behavior, all offline
+- **Logging** — every step of the agent is logged (prompt size, response size, parse result, fallback reason)
+- **Error handling** — 3-layer guardrail: missing API key → skip calls; API failure → return fallback; malformed JSON → strip fences and retry parse before falling back
+
 **What worked:**
-- All 8 tests pass, including 2 new offline agent tests that verify fallback behavior without needing a real API key.
-- The three-layer error handling (missing key, API failure, malformed JSON) all behave as expected — the app never crashes.
-- The JSON fence-stripping in `_parse_json` handles Gemini's tendency to wrap responses in markdown code blocks.
+- The three-layer error handling held up in every failure scenario tested — the app never crashes regardless of API state.
+- Mocking `_client.models.generate_content` to raise an exception correctly triggered the fallback path and returned a valid `AgentInsight` with an error message.
+- The JSON fence-stripping in `_parse_json` correctly handles Gemini's tendency to wrap responses in markdown code blocks.
 
 **What didn't work initially:**
-- `google-generativeai` (the original SDK) is fully deprecated — switched to `google-genai`.
-- `gemini-1.5-flash` model IDs are no longer valid in the new SDK — now using `models/gemini-2.0-flash-lite`.
-- Free tier quota limits can block calls during heavy testing — the fallback prevents this from breaking the UI.
+- `google-generativeai` (original SDK) is fully deprecated — required switching to `google-genai`.
+- `gemini-1.5-flash` model IDs are not valid in the new SDK — settled on `models/gemini-2.0-flash-lite`.
+- Free tier quota limits (`limit: 0`) blocked live API calls during testing — the fallback prevented any UI crashes, which validated the reliability design.
 
 **What I learned:**
-- Testing AI fallback paths is more important than testing the happy path — the happy path depends on an external API you don't control.
-- Structured JSON prompts are fragile: even small wording changes can cause the model to add prose or omit required keys. Defensive parsing (stripping fences, using `.get()` with defaults) is essential.
+- Testing fallback paths matters more than testing the happy path for AI systems — the happy path depends on an external API you don't control. The two new agent tests catch failures that would otherwise only appear in production.
+- Structured JSON prompts are fragile: separating the Plan call and Check call into two focused prompts produced more consistent output than a single combined prompt.
 
 ---
 

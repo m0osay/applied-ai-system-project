@@ -1,6 +1,8 @@
-"""Basic tests for the PawPal+ logic layer."""
+"""Basic tests for the PawPal+ logic layer and AI agent reliability."""
 
+import os
 from datetime import date
+from unittest.mock import MagicMock, patch
 
 from pawpal_system import Owner, Pet, Scheduler, Task
 
@@ -88,3 +90,50 @@ def test_detect_conflicts_flags_duplicate_task_times() -> None:
     assert "08:30" in conflicts[0]
     assert "Luna: Breakfast" in conflicts[0]
     assert "Mochi: Play session" in conflicts[0]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: AI agent reliability tests (offline — no API key or network needed)
+# ---------------------------------------------------------------------------
+
+def test_agent_returns_fallback_when_api_key_missing() -> None:
+    """PawPalAgent.analyze() returns an error-flagged insight when no key is set."""
+    from gemini_agent import AgentInsight, PawPalAgent
+
+    owner = Owner(name="Test", available_minutes_per_day=60)
+    pet = Pet(name="Rex", species="dog", age=2)
+    owner.add_pet(pet)
+    scheduler = Scheduler(owner)
+    plan = scheduler.build_plan()
+
+    with patch.dict(os.environ, {}, clear=True):
+        os.environ.pop("GEMINI_API_KEY", None)
+        agent = PawPalAgent()
+        insight = agent.analyze(owner, plan)
+
+    assert isinstance(insight, AgentInsight)
+    assert insight.error is not None
+    assert insight.gaps == []
+
+
+def test_agent_degrades_gracefully_on_api_error() -> None:
+    """analyze() returns a usable AgentInsight even when the Gemini call raises."""
+    from gemini_agent import AgentInsight, PawPalAgent
+
+    owner = Owner(name="Test", available_minutes_per_day=60)
+    pet = Pet(name="Bella", species="cat", age=5)
+    pet.add_task(Task(description="Feeding", time="08:00", frequency="daily"))
+    owner.add_pet(pet)
+    scheduler = Scheduler(owner)
+    plan = scheduler.build_plan()
+
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"}):
+        agent = PawPalAgent()
+        # Simulate a network failure on every Gemini call
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = Exception("API timeout")
+
+        insight = agent.analyze(owner, plan)
+
+    assert isinstance(insight, AgentInsight)
+    assert insight.error is not None
