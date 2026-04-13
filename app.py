@@ -1,5 +1,8 @@
+import logging
+
 import streamlit as st
 
+from gemini_agent import AgentInsight, PawPalAgent
 from pawpal_system import Owner, Pet, Scheduler, Task
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="wide")
@@ -39,6 +42,8 @@ def build_schedule_table(plan) -> list[dict[str, str]]:
 
 if "owner" not in st.session_state:
     st.session_state.owner = Owner(name="Jordan", available_minutes_per_day=45)
+if "agent_insight" not in st.session_state:
+    st.session_state.agent_insight = None
 
 owner = st.session_state.owner
 
@@ -233,6 +238,14 @@ with generate_col:
             st.warning("Add at least one pet and one pending task before generating a schedule.")
         else:
             st.session_state.latest_plan = scheduler.build_plan()
+            try:
+                agent = PawPalAgent()
+                st.session_state.agent_insight = agent.analyze(
+                    owner, st.session_state.latest_plan
+                )
+            except Exception as exc:
+                logging.error("Unexpected agent error: %s", exc)
+                st.session_state.agent_insight = None
 
 with summary_col:
     st.markdown(
@@ -272,6 +285,43 @@ if plan is not None:
 
     st.markdown("#### Why this plan was chosen")
     st.success(plan.summary)
+
+    insight: AgentInsight | None = st.session_state.get("agent_insight")
+    if insight is not None:
+        with st.expander("AI Care Gap Analysis (Gemini Flash)", expanded=True):
+            if insight.error:
+                st.warning(f"AI analysis unavailable: {insight.error}")
+            else:
+                if insight.overall_note:
+                    st.info(insight.overall_note)
+
+                validated = insight.validated or []
+                if validated:
+                    actionable = [v for v in validated if v.get("status") == "actionable"]
+                    deferred = [v for v in validated if v.get("status") == "deferred"]
+
+                    if actionable:
+                        st.markdown("**Actionable today:**")
+                        for item in actionable:
+                            st.success(
+                                f"**{item.get('pet_name')}** — {item.get('suggestion')} "
+                                f"({item.get('suggested_duration_minutes')} min)  \n"
+                                f"_{item.get('confidence_note', '')}_"
+                            )
+                    if deferred:
+                        st.markdown("**Suggested for tomorrow:**")
+                        for item in deferred:
+                            st.info(
+                                f"**{item.get('pet_name')}** — {item.get('suggestion')}  \n"
+                                f"_{item.get('confidence_note', '')}_"
+                            )
+                elif insight.gaps:
+                    st.markdown("**Identified care gaps:**")
+                    for gap in insight.gaps:
+                        st.info(
+                            f"**{gap.get('pet_name')}** ({gap.get('gap_type')}): "
+                            f"{gap.get('suggestion')} — {gap.get('reason')}"
+                        )
 else:
     st.info("Generate a schedule to see your full daily plan here.")
 
